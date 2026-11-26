@@ -1,4 +1,4 @@
-# digital-twin-MU
+# digital-twin-BAMU
 
 ## Document Chat
 
