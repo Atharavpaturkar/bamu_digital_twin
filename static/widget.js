@@ -35,6 +35,7 @@
   panel.hidden = true;
   const frame = document.createElement("iframe");
   frame.title = "Document Chat";
+  frame.allow = "microphone";
   frame.src = `${chatUrl.replace(/\/$/, "")}/?embed=1`;
   panel.append(frame);
 

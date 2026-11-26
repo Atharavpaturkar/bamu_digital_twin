@@ -126,3 +126,81 @@ def test_widget_script_is_served() -> None:
 
     assert response.status_code == 200
     assert "document-chat-widget-button" in response.text
+    assert 'frame.allow = "microphone"' in response.text
+
+
+def test_index_includes_mic_button() -> None:
+    response = TestClient(chat_app.app).get("/")
+
+    assert response.status_code == 200
+    assert 'id="mic-button"' in response.text
+    assert 'fetch("/transcribe"' in response.text
+
+
+class FakeModels:
+    def __init__(self, text: str) -> None:
+        self.text = text
+        self.kwargs: dict[str, object] = {}
+
+    def generate_content(self, **kwargs: object) -> SimpleNamespace:
+        self.kwargs = kwargs
+        return SimpleNamespace(text=self.text)
+
+
+def test_transcribe_returns_text(monkeypatch) -> None:
+    import base64
+
+    models = FakeModels("What are the key topics in the diagnostic report?")
+    monkeypatch.setattr(
+        chat_app,
+        "_get_gemini_client",
+        lambda: SimpleNamespace(models=models),
+    )
+    audio_b64 = base64.b64encode(b"RIFF\x00\x00\x00\x00WAVEfmt ").decode("ascii")
+    response = TestClient(chat_app.app).post(
+        "/transcribe",
+        json={"audio_base64": audio_b64, "mime_type": "audio/webm;codecs=opus"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"text": "What are the key topics in the diagnostic report?"}
+    assert models.kwargs["model"] == chat_app.MODEL_NAME
+    contents = models.kwargs["contents"]
+    assert len(contents) == 2
+    assert contents[0].inline_data.mime_type == "audio/webm"
+
+
+def test_transcribe_rejects_invalid_mime_type(monkeypatch) -> None:
+    import base64
+
+    audio_b64 = base64.b64encode(b"hello").decode("ascii")
+    response = TestClient(chat_app.app).post(
+        "/transcribe",
+        json={"audio_base64": audio_b64, "mime_type": "text/plain"},
+    )
+
+    assert response.status_code == 422
+
+
+def test_transcribe_rejects_invalid_base64(monkeypatch) -> None:
+    monkeypatch.setenv("GEMINI_API_KEY", "configured-for-test")
+    response = TestClient(chat_app.app).post(
+        "/transcribe",
+        json={"audio_base64": "not-valid-base64!!!", "mime_type": "audio/webm"},
+    )
+
+    assert response.status_code == 422
+
+
+def test_transcribe_without_key_returns_setup_message(monkeypatch) -> None:
+    import base64
+
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    audio_b64 = base64.b64encode(b"RIFF\x00\x00\x00\x00WAVE").decode("ascii")
+    response = TestClient(chat_app.app).post(
+        "/transcribe",
+        json={"audio_base64": audio_b64, "mime_type": "audio/wav"},
+    )
+
+    assert response.status_code == 503
+    assert "missing GEMINI_API_KEY" in response.json()["detail"]
